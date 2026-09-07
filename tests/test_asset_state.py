@@ -176,21 +176,30 @@ def test_observe_normal_packet_advances_state() -> None:
     assert state.gap_count == 0
 
 
-def test_observe_forward_gap_returns_correct_gap_size_and_advances_state() -> None:
+@pytest.mark.parametrize(
+    ("first_sequence", "second_sequence", "expected_gap"),
+    [
+        (10, 15, 4),
+        (7, 10, 2),
+    ],
+)
+def test_observe_forward_gap_returns_correct_gap_size_and_advances_state(
+    first_sequence: int, second_sequence: int, expected_gap: int
+) -> None:
     state = _asset_state()
-    state.observe(_packet(sequence_number=10), 100.0)
+    state.observe(_packet(sequence_number=first_sequence), 100.0)
 
-    packet = _packet(sequence_number=15)
+    packet = _packet(sequence_number=second_sequence)
     seq_class, gap_size = state.observe(packet, 102.0)
 
     assert seq_class is SequenceClass.FORWARD_GAP
-    assert gap_size == 4
-    assert state.highest_sequence == 15
+    assert gap_size == expected_gap
+    assert state.highest_sequence == second_sequence
     assert state.latest_telemetry is packet
     assert state.last_progress_monotonic == 102.0
     assert state.accepted_count == 2
     assert state.gap_count == 1
-    assert 15 in state.recent_sequence_set
+    assert second_sequence in state.recent_sequence_set
 
 
 def test_observe_duplicate_for_recently_seen_sequence_does_not_advance_state() -> None:
@@ -343,14 +352,15 @@ def test_observe_returns_tuple_of_sequence_class_and_int() -> None:
     assert isinstance(result[1], int)
 
 
-def test_observe_first_packet_with_sequence_zero() -> None:
+@pytest.mark.parametrize("sequence_number", [0, 500])
+def test_observe_first_packet_various_sequence_numbers(sequence_number: int) -> None:
     state = _asset_state()
 
-    seq_class, gap_size = state.observe(_packet(sequence_number=0), 100.0)
+    seq_class, gap_size = state.observe(_packet(sequence_number=sequence_number), 100.0)
 
     assert seq_class is SequenceClass.FIRST
     assert gap_size == 0
-    assert state.highest_sequence == 0
+    assert state.highest_sequence == sequence_number
 
 
 def test_observe_out_of_order_then_forward_gap() -> None:
@@ -366,6 +376,21 @@ def test_observe_out_of_order_then_forward_gap() -> None:
     assert state.highest_sequence == 20
     assert state.out_of_order_count == 1
     assert state.gap_count == 2
+
+
+def test_observe_eviction_removes_from_both_deque_and_set() -> None:
+    state = _asset_state(recent_sequence_capacity=2)
+    state.observe(_packet(sequence_number=10), 100.0)
+    state.observe(_packet(sequence_number=11), 101.0)
+    state.observe(_packet(sequence_number=12), 102.0)
+
+    seq_class, gap_size = state.observe(_packet(sequence_number=10), 103.0)
+
+    assert seq_class is SequenceClass.OUT_OF_ORDER
+    assert gap_size == 0
+    assert list(state.recent_sequence_order) == [12, 10]
+    assert state.recent_sequence_set == {12, 10}
+    assert 11 not in state.recent_sequence_set
 
 
 def test_observe_highest_sequence_evicted_from_history_is_duplicate() -> None:
