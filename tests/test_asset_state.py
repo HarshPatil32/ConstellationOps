@@ -3,7 +3,9 @@ from datetime import datetime
 import pytest
 from pydantic import ValidationError
 
-from constellationops.asset_state import AssetHealth, AssetState, SequenceClass
+from constellationops.asset_state import AssetState, SequenceClass
+from constellationops.config import Settings
+from constellationops.health import HealthState
 from constellationops.telemetry import TelemetryPacket
 
 
@@ -39,12 +41,18 @@ def test_sequence_class_members() -> None:
     }
 
 
-def test_asset_health_members() -> None:
-    assert set(AssetHealth) == {
-        AssetHealth.ONLINE,
-        AssetHealth.STALE,
-        AssetHealth.OFFLINE,
+def _settings(**overrides: object) -> Settings:
+    kwargs: dict[str, object] = {
+        "udp_host": "0.0.0.0",
+        "udp_port": 9999,
+        "queue_capacity": 1000,
+        "recent_sequence_history": 50,
+        "stale_after_seconds": 5,
+        "offline_after_seconds": 15,
+        "health_check_interval_seconds": 5,
     }
+    kwargs.update(overrides)
+    return Settings(**kwargs)
 
 
 def test_asset_state_defaults() -> None:
@@ -62,7 +70,7 @@ def test_asset_state_defaults() -> None:
     assert state.latest_telemetry is None
     assert state.last_seen_monotonic is None
     assert state.last_progress_monotonic is None
-    assert state.health is AssetHealth.ONLINE
+    assert state.health is HealthState.ONLINE
 
 
 @pytest.mark.parametrize("recent_sequence_capacity", [0, -1])
@@ -389,3 +397,86 @@ def test_latest_telemetry_is_not_mutable_after_observe() -> None:
 
     assert state.latest_telemetry is not None
     assert state.latest_telemetry.temperature_c == 22.5
+
+
+def test_refresh_health_no_op_when_never_observed() -> None:
+    state = _asset_state()
+    settings = _settings()
+
+    result = state.refresh_health(100.0, settings)
+
+    assert result is HealthState.ONLINE
+    assert state.health is HealthState.ONLINE
+
+
+@pytest.mark.parametrize(
+    ("now", "expected"),
+    [
+        (104.999, HealthState.ONLINE),
+        (105.0, HealthState.STALE),
+        (114.999, HealthState.STALE),
+        (115.0, HealthState.OFFLINE),
+    ],
+)
+def test_refresh_health_boundary_values(now: float, expected: HealthState) -> None:
+    state = _asset_state()
+    state.observe(_packet(sequence_number=1), 100.0)
+    settings = _settings()
+
+    result = state.refresh_health(now, settings)
+
+    assert result is expected
+    assert state.health is expected
+
+
+def test_refresh_health_uses_last_seen_not_last_progress() -> None:
+    state = _asset_state()
+    state.observe(_packet(sequence_number=10), 100.0)
+    state.observe(_packet(sequence_number=10), 110.0)
+    settings = _settings()
+
+    result = state.refresh_health(111.0, settings)
+
+    assert result is HealthState.ONLINE
+    assert state.health is HealthState.ONLINE
+    assert state.last_seen_monotonic == 110.0
+    assert state.last_progress_monotonic == 100.0
+
+
+def test_refresh_health_is_idempotent_without_new_observation() -> None:
+    state = _asset_state()
+    state.observe(_packet(sequence_number=1), 100.0)
+    settings = _settings()
+
+    first = state.refresh_health(110.0, settings)
+    second = state.refresh_health(110.0, settings)
+
+    assert first is HealthState.STALE
+    assert second is HealthState.STALE
+    assert state.health is HealthState.STALE
+
+
+@pytest.mark.parametrize(
+    ("before_now", "before_expected", "resume_now", "refresh_now"),
+    [
+        (110.0, HealthState.STALE, 110.0, 111.0),
+        (115.0, HealthState.OFFLINE, 115.0, 116.0),
+    ],
+)
+def test_refresh_health_returns_to_online_after_new_packet(
+    before_now: float,
+    before_expected: HealthState,
+    resume_now: float,
+    refresh_now: float,
+) -> None:
+    state = _asset_state()
+    state.observe(_packet(sequence_number=1), 100.0)
+    settings = _settings()
+
+    assert state.refresh_health(before_now, settings) is before_expected
+    state.observe(_packet(sequence_number=1), resume_now)
+
+    result = state.refresh_health(refresh_now, settings)
+
+    assert result is HealthState.ONLINE
+    assert state.health is HealthState.ONLINE
