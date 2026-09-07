@@ -33,7 +33,7 @@ The simulator creates configurable concurrent simulated assets. Each maintains i
 Telemetry uses this shape:
 
 - `asset_id`
-- `sequence`
+- `sequence_number`
 - `sent_at`
 - `temperature_c`
 - `battery_pct`
