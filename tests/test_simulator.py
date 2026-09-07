@@ -92,6 +92,53 @@ def test_asset_rngs_do_not_interfere() -> None:
     assert _generate_telemetry_values(rng_b) == expected_b
 
 
+_SCHEDULING_TEST_RATE_HZ = 50.0
+_SCHEDULING_TEST_DURATION_S = 0.3
+
+
+async def _collect_sat_one_packets(assets: int, seed: int) -> list[TelemetryPacket]:
+    queue: asyncio.Queue[TelemetryPacket] = asyncio.Queue(maxsize=1000)
+    metrics = Metrics()
+    transport, (host, port) = await _bind_receiver(queue, metrics)
+    try:
+        await run_simulator(
+            assets=assets,
+            rate=_SCHEDULING_TEST_RATE_HZ,
+            host=host,
+            port=port,
+            duration=_SCHEDULING_TEST_DURATION_S,
+            seed=seed,
+            drop_prob=0.0,
+            dup_prob=0.0,
+            reorder_prob=0.0,
+        )
+        packets = await _collect_packets(queue, timeout=0.5)
+    finally:
+        transport.close()
+
+    sat_one = [packet for packet in packets if packet.asset_id == "sat-001"]
+    sat_one.sort(key=lambda packet: packet.sequence_number)
+    return sat_one
+
+
+async def test_asset_telemetry_is_independent_of_concurrent_sibling_tasks() -> None:
+    seed = 42
+    solo = await _collect_sat_one_packets(assets=1, seed=seed)
+    with_siblings = await _collect_sat_one_packets(assets=5, seed=seed)
+
+    common_len = min(len(solo), len(with_siblings))
+    min_expected = int(_SCHEDULING_TEST_DURATION_S * _SCHEDULING_TEST_RATE_HZ * 0.5)
+    assert common_len >= min_expected
+
+    for index in range(common_len):
+        solo_packet = solo[index]
+        sibling_packet = with_siblings[index]
+        assert solo_packet.sequence_number == sibling_packet.sequence_number == index
+        assert solo_packet.temperature_c == sibling_packet.temperature_c
+        assert solo_packet.battery_pct == sibling_packet.battery_pct
+        assert solo_packet.signal_dbm == sibling_packet.signal_dbm
+
+
 def test_seeded_values_respect_bounds() -> None:
     rng = random.Random(123)
     for _ in range(100):
@@ -560,13 +607,16 @@ async def test_end_to_end_over_real_socket() -> None:
     transport, (host, port) = await _bind_receiver(queue, metrics)
 
     try:
-        await run_simulator(
+        stats = await run_simulator(
             assets=2,
             rate=20.0,
             host=host,
             port=port,
             duration=0.3,
             seed=1,
+            drop_prob=0.0,
+            dup_prob=0.0,
+            reorder_prob=0.0,
         )
         packets = await _collect_packets(queue, timeout=0.5)
 
@@ -579,6 +629,10 @@ async def test_end_to_end_over_real_socket() -> None:
         for asset_packets in by_asset.values():
             sequences = [packet.sequence_number for packet in asset_packets]
             assert sequences == list(range(len(sequences)))
+
+        assert stats.dropped == 0
+        assert stats.duplicated == 0
+        assert stats.generated == sum(len(v) for v in by_asset.values())
     finally:
         transport.close()
 
