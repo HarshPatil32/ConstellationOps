@@ -9,7 +9,7 @@ class InvalidPacketError(Exception):
 
 
 class TelemetryPacket(BaseModel):
-    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False, frozen=True)
 
     asset_id: str = Field(min_length=1)
     sequence_number: int = Field(ge=0, strict=True)
