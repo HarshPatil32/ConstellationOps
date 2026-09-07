@@ -4,13 +4,13 @@
 
 ConstellationOps is a real-time telemetry ingestion and health-monitoring system for simulated assets that communicate over an unreliable network. The system is designed to model the reliability problems that show up in distributed telemetry systems: lost, duplicated, reordered, delayed, or malformed packets; packets that arrive faster than the consumer can process them; and assets that sometimes stop transmitting entirely.
 
-The P0 system will ingest telemetry concurrently without allowing malformed traffic or one misbehaving asset to destabilize the rest of the process. It must maintain meaningful per-asset state despite UDP's lack of delivery and ordering guarantees. It must distinguish receipt of valid telemetry from forward sequence progress, detect stale and offline assets, expose operational state and reliability counters for inspection, and remain memory-bounded under overload. The goal is not to reproduce a real spacecraft or production satellite platform, but to build a small, inspectable system that demonstrates the reliability and concurrency principles involved in telemetry ingestion.
+The P0 system will ingest telemetry concurrently without allowing malformed traffic or one misbehaving asset to destabilize the rest of the process. It must maintain meaningful per-asset state despite UDP's lack of delivery and ordering guarantees. It must distinguish receipt of valid telemetry from forward sequence progress, detect stale and offline assets, expose operational state and reliability counters for inspection, and keep ingestion buffering bounded under overload. The goal is not to reproduce a real spacecraft or production satellite platform, but to build a small, inspectable system that demonstrates the reliability and concurrency principles involved in telemetry ingestion.
 
 ## System Invariants
 
 1. **Valid telemetry only enters system state.** Malformed or schema-invalid telemetry must never mutate per-asset state. The UDP boundary can receive arbitrary bytes. Parsing and validation happen before telemetry becomes trusted application data. Invalid packets are rejected and counted rather than entering the processing pipeline.
 
-2. **Ingestion memory is bounded.** The amount of telemetry waiting to be processed must have a fixed upper bound independent of incoming traffic volume. The receiver must never create an unbounded backlog. A bounded queue establishes the maximum amount of queued work, and overload must result in an explicit, measurable load-shedding decision rather than uncontrolled memory growth.
+2. **Ingestion buffering is bounded.** The amount of telemetry waiting to be processed must have a fixed upper bound independent of incoming traffic volume. The receiver must never create an unbounded backlog. A bounded queue establishes the maximum amount of queued work, and overload must result in an explicit, measurable load-shedding decision rather than uncontrolled queue growth. Per-asset duplicate detection uses a bounded recent-sequence history so that structure does not grow without limit as sequences advance. P0 does not cap total in-memory asset count; the guarantee here is bounded ingestion backlog and bounded per-asset sequence history, not a global cap on all process memory.
 
 3. **Overload is explicit and observable.** When the system cannot keep up with incoming telemetry, packets may be dropped intentionally, but those drops must never be silent. UDP means transport-level delivery is not guaranteed. ConstellationOps additionally needs to distinguish intentional application-side load shedding from normal processing. Queue-overflow drops therefore increment an explicit metric.
 
@@ -49,7 +49,7 @@ A fixed-capacity in-process queue separates network receipt from telemetry proce
 
 ### 4. Telemetry Processor / Sequence Classifier
 
-A single telemetry-processing path consumes validated packets from the bounded queue and classifies each packet relative to that asset's sequence history as forward progress, duplicate, or late/out-of-order. It detects forward sequence gaps as estimated missing telemetry and updates state according to the classification. Keeping mutation serialized in P0 avoids unnecessary locking and race conditions while preserving concurrent network ingestion. This component primarily enforces Invariants 4, 5, and 6 and emits reliability information required by Invariant 8.
+A single telemetry-processing path consumes validated packets from the bounded queue and classifies each packet relative to that asset's sequence history as forward progress, duplicate, or late/out-of-order. It detects forward sequence gaps as estimated missing telemetry and updates state according to the classification. Every valid packet refreshes `last_seen`; only forward progress updates `last_progress`, `highest_sequence`, and latest forward-progress telemetry. Keeping mutation serialized in P0 avoids unnecessary locking and race conditions while preserving concurrent network ingestion. This component primarily enforces Invariants 4, 5, and 6 and emits reliability information required by Invariant 8.
 
 For sequence state, the intended model is:
 
@@ -60,7 +60,7 @@ That bounded history helps identify duplicates without retaining every sequence 
 
 ### 5. Per-Asset State Store
 
-The in-memory asset state model holds independent state for each simulated asset, including `last_seen`, `last_progress`, `highest_sequence`, bounded recent-sequence information, latest forward-progress telemetry, health state, and relevant counters. State belonging to one asset cannot overwrite or corrupt another asset's state, and late/duplicate packets cannot regress forward-progress state. This component exists because of Invariants 4, 5, and 6 and provides the state consumed by health monitoring and the read API. This is in-process state, not a database.
+The in-memory asset state model holds independent state for each simulated asset, including `last_seen`, `last_progress`, `highest_sequence`, bounded recent-sequence information, latest forward-progress telemetry, health state, and relevant counters. Every valid packet refreshes `last_seen`; only forward sequence progress refreshes `last_progress`, `highest_sequence`, and latest forward-progress telemetry. State belonging to one asset cannot overwrite or corrupt another asset's state, and late/duplicate packets cannot regress forward-progress state. This component exists because of Invariants 4, 5, and 6 and provides the state consumed by health monitoring and the read API. This is in-process state, not a database.
 
 ### 6. Health Monitor
 
@@ -75,7 +75,7 @@ The API provides a read-only inspection surface over current system and per-asse
 | Invariant | Primary enforcing component(s) |
 |---|---|
 | 1. Valid telemetry only | UDP Receiver |
-| 2. Bounded memory | Bounded Ingestion Queue |
+| 2. Bounded ingestion buffering | Bounded Ingestion Queue + Per-Asset State (bounded `recent_sequences`) |
 | 3. Observable overload | UDP Receiver + Bounded Queue + Metrics |
 | 4. Asset isolation | Telemetry Processor + Per-Asset State |
 | 5. Monotonic sequence state | Sequence Classifier + Per-Asset State |
