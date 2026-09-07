@@ -2,6 +2,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 
+from constellationops.config import Settings
+from constellationops.health import HealthState, derive_health
 from constellationops.telemetry import TelemetryPacket
 
 
@@ -11,12 +13,6 @@ class SequenceClass(str, Enum):
     FORWARD_GAP = "FORWARD_GAP"
     DUPLICATE = "DUPLICATE"
     OUT_OF_ORDER = "OUT_OF_ORDER"
-
-
-class AssetHealth(str, Enum):
-    ONLINE = "ONLINE"
-    STALE = "STALE"
-    OFFLINE = "OFFLINE"
 
 
 @dataclass
@@ -33,7 +29,7 @@ class AssetState:
     latest_telemetry: TelemetryPacket | None = None
     last_seen_monotonic: float | None = None # For any valid packet
     last_progress_monotonic: float | None = None # For only forward progress packets
-    health: AssetHealth = AssetHealth.ONLINE
+    health: HealthState = HealthState.ONLINE
 
     def __post_init__(self) -> None:
         if self.recent_sequence_capacity < 1:
@@ -90,3 +86,10 @@ class AssetState:
             self._record_sequence(seq)
 
         return seq_class, gap_size
+
+    def refresh_health(self, now: float, settings: Settings) -> HealthState:
+        if self.last_seen_monotonic is None:
+            return self.health
+        age_seconds = now - self.last_seen_monotonic
+        self.health = derive_health(age_seconds, settings)
+        return self.health
