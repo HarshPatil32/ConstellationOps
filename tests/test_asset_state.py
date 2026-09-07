@@ -480,3 +480,74 @@ def test_refresh_health_returns_to_online_after_new_packet(
 
     assert result is HealthState.ONLINE
     assert state.health is HealthState.ONLINE
+
+
+def test_refresh_health_stale_to_online_after_normal_packet() -> None:
+    state = _asset_state()
+    state.observe(_packet(sequence_number=1), 100.0)
+    settings = _settings()
+    assert state.refresh_health(105.0, settings) is HealthState.STALE
+
+    seq_class, _ = state.observe(_packet(sequence_number=2), 105.0)
+
+    assert seq_class is SequenceClass.NORMAL
+    assert state.refresh_health(105.0, settings) is HealthState.ONLINE
+
+
+@pytest.mark.parametrize(
+    ("second_sequence", "expected_class"),
+    [
+        (2, SequenceClass.NORMAL),
+        (5, SequenceClass.FORWARD_GAP),
+    ],
+)
+def test_refresh_health_offline_to_online_immediately_after_valid_packet(
+    second_sequence: int, expected_class: SequenceClass
+) -> None:
+    state = _asset_state()
+    state.observe(_packet(sequence_number=1), 100.0)
+    settings = _settings()
+    assert state.refresh_health(115.0, settings) is HealthState.OFFLINE
+
+    seq_class, _ = state.observe(_packet(sequence_number=second_sequence), 115.0)
+
+    assert seq_class is expected_class
+    assert state.refresh_health(115.0, settings) is HealthState.ONLINE
+
+
+def test_refresh_health_offline_to_online_after_first_packet_on_reset_state() -> None:
+    # highest_sequence is None, so the next packet is FIRST even though health is
+    # pre-set to OFFLINE. Not reachable via normal observe() flow.
+    state = _asset_state(health=HealthState.OFFLINE, last_seen_monotonic=50.0)
+    settings = _settings()
+
+    seq_class, _ = state.observe(_packet(sequence_number=1), 200.0)
+
+    assert seq_class is SequenceClass.FIRST
+    assert state.refresh_health(200.0, settings) is HealthState.ONLINE
+
+
+def test_refresh_health_offline_revives_to_online_after_duplicate_packet() -> None:
+    # Health revival uses last_seen, not sequence progress (DESIGN.md Invariant 7).
+    state = _asset_state()
+    state.observe(_packet(sequence_number=1), 100.0)
+    settings = _settings()
+    assert state.refresh_health(115.0, settings) is HealthState.OFFLINE
+
+    seq_class, _ = state.observe(_packet(sequence_number=1), 115.0)
+
+    assert seq_class is SequenceClass.DUPLICATE
+    assert state.refresh_health(115.0, settings) is HealthState.ONLINE
+
+
+def test_refresh_health_offline_revives_to_online_after_out_of_order_packet() -> None:
+    state = _asset_state()
+    state.observe(_packet(sequence_number=1), 100.0)
+    state.observe(_packet(sequence_number=5), 100.0)
+    settings = _settings()
+    assert state.refresh_health(115.0, settings) is HealthState.OFFLINE
+
+    seq_class, _ = state.observe(_packet(sequence_number=3), 115.0)
+
+    assert seq_class is SequenceClass.OUT_OF_ORDER
+    assert state.refresh_health(115.0, settings) is HealthState.ONLINE
