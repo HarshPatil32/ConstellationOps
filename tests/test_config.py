@@ -1,15 +1,6 @@
 import pytest
 
-from constellationops.config import (
-    HEALTH_CHECK_INTERVAL_SECONDS,
-    OFFLINE_AFTER_SECONDS,
-    QUEUE_CAPACITY,
-    RECENT_SEQUENCE_HISTORY,
-    STALE_AFTER_SECONDS,
-    UDP_HOST,
-    UDP_PORT,
-    Settings,
-)
+from constellationops.config import Settings
 
 _ENV_VARS = (
     "UDP_HOST",
@@ -21,16 +12,26 @@ _ENV_VARS = (
     "HEALTH_CHECK_INTERVAL_SECONDS",
 )
 
+_DEFAULT_SETTINGS = Settings(
+    udp_host="0.0.0.0",
+    udp_port=9999,
+    queue_capacity=1000,
+    recent_sequence_history=50,
+    stale_after_seconds=5,
+    offline_after_seconds=15,
+    health_check_interval_seconds=5,
+)
+
 
 def _valid_settings_kwargs(**overrides: object) -> dict[str, object]:
     kwargs: dict[str, object] = {
-        "udp_host": UDP_HOST,
-        "udp_port": UDP_PORT,
-        "queue_capacity": QUEUE_CAPACITY,
-        "recent_sequence_history": RECENT_SEQUENCE_HISTORY,
-        "stale_after_seconds": STALE_AFTER_SECONDS,
-        "offline_after_seconds": OFFLINE_AFTER_SECONDS,
-        "health_check_interval_seconds": HEALTH_CHECK_INTERVAL_SECONDS,
+        "udp_host": _DEFAULT_SETTINGS.udp_host,
+        "udp_port": _DEFAULT_SETTINGS.udp_port,
+        "queue_capacity": _DEFAULT_SETTINGS.queue_capacity,
+        "recent_sequence_history": _DEFAULT_SETTINGS.recent_sequence_history,
+        "stale_after_seconds": _DEFAULT_SETTINGS.stale_after_seconds,
+        "offline_after_seconds": _DEFAULT_SETTINGS.offline_after_seconds,
+        "health_check_interval_seconds": _DEFAULT_SETTINGS.health_check_interval_seconds,
     }
     kwargs.update(overrides)
     return kwargs
@@ -45,13 +46,7 @@ def clear_config_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_from_env_uses_defaults(clear_config_env: None) -> None:
     settings = Settings.from_env()
 
-    assert settings.udp_host == UDP_HOST
-    assert settings.udp_port == UDP_PORT
-    assert settings.queue_capacity == QUEUE_CAPACITY
-    assert settings.recent_sequence_history == RECENT_SEQUENCE_HISTORY
-    assert settings.stale_after_seconds == STALE_AFTER_SECONDS
-    assert settings.offline_after_seconds == OFFLINE_AFTER_SECONDS
-    assert settings.health_check_interval_seconds == HEALTH_CHECK_INTERVAL_SECONDS
+    assert settings == _DEFAULT_SETTINGS
 
 
 def test_from_env_applies_overrides(clear_config_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -98,6 +93,12 @@ def test_settings_rejects_invalid_thresholds_direct(
         ("udp_port", 65536, "udp_port must be between 1 and 65535"),
         ("queue_capacity", 0, "queue_capacity must be at least 1"),
         ("recent_sequence_history", 0, "recent_sequence_history must be at least 1"),
+        ("stale_after_seconds", 0, "stale_after_seconds must be at least 1"),
+        ("offline_after_seconds", 0, "offline_after_seconds must be at least 1"),
+        ("health_check_interval_seconds", 0, "health_check_interval_seconds must be at least 1"),
+        ("stale_after_seconds", -1, "stale_after_seconds must be at least 1"),
+        ("offline_after_seconds", -1, "offline_after_seconds must be at least 1"),
+        ("health_check_interval_seconds", -1, "health_check_interval_seconds must be at least 1"),
     ],
 )
 def test_settings_rejects_invalid_bounds(
@@ -116,6 +117,16 @@ def test_from_env_rejects_invalid_bounds(
     monkeypatch.setenv("QUEUE_CAPACITY", "0")
 
     with pytest.raises(ValueError, match="queue_capacity must be at least 1"):
+        Settings.from_env()
+
+
+def test_from_env_rejects_invalid_time_fields(
+    clear_config_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HEALTH_CHECK_INTERVAL_SECONDS", "0")
+
+    with pytest.raises(ValueError, match="health_check_interval_seconds must be at least 1"):
         Settings.from_env()
 
 
