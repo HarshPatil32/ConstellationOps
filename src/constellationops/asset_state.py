@@ -24,15 +24,15 @@ class AssetState:
     asset_id: str
     recent_sequence_capacity: int
     highest_sequence: int | None = None
-    recent_sequence_order: deque[int] = field(default_factory=deque)
-    recent_sequence_set: set[int] = field(default_factory=set)
+    recent_sequence_order: deque[int] = field(default_factory=deque) # Used for O(1) oldest value lookup and eviction
+    recent_sequence_set: set[int] = field(default_factory=set) # Used for O(1) lookups
     accepted_count: int = 0
     gap_count: int = 0
     duplicate_count: int = 0
     out_of_order_count: int = 0
     latest_telemetry: TelemetryPacket | None = None
-    last_seen_monotonic: float | None = None
-    last_progress_monotonic: float | None = None
+    last_seen_monotonic: float | None = None # For any valid packet
+    last_progress_monotonic: float | None = None # For only forward progress packets
     health: AssetHealth = AssetHealth.ONLINE
 
     def __post_init__(self) -> None:
@@ -50,7 +50,7 @@ class AssetState:
 
     def observe(self, packet: TelemetryPacket, now: float) -> tuple[SequenceClass, int]:
         seq = packet.sequence_number
-        self.last_seen_monotonic = now
+        self.last_seen_monotonic = now # The packet.sent_at is not trusted or guaranteed to be monotonic
 
         if self.highest_sequence is None:
             seq_class = SequenceClass.FIRST
