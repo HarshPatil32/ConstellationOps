@@ -29,5 +29,9 @@ class AssetRegistry:
         return list(self._assets.values())
 
     @property
+    def assets(self) -> dict[str, AssetState]:
+        return self._assets
+
+    @property
     def known_assets(self) -> int:
         return len(self._assets)

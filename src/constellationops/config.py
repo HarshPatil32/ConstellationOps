@@ -8,6 +8,8 @@ _RECENT_SEQUENCE_HISTORY = 50
 _STALE_AFTER_SECONDS = 5
 _OFFLINE_AFTER_SECONDS = 15
 _HEALTH_CHECK_INTERVAL_SECONDS = 5
+_HTTP_HOST = "0.0.0.0"
+_HTTP_PORT = 8000
 
 
 def _parse_int_env(name: str, default: int) -> int:
@@ -29,10 +31,14 @@ class Settings:
     stale_after_seconds: int
     offline_after_seconds: int
     health_check_interval_seconds: int
+    http_host: str = _HTTP_HOST
+    http_port: int = _HTTP_PORT
 
     def __post_init__(self) -> None:
-        if not 1 <= self.udp_port <= 65535:
-            raise ValueError("udp_port must be between 1 and 65535")
+        if not 0 <= self.udp_port <= 65535:
+            raise ValueError("udp_port must be between 0 and 65535")
+        if not 1 <= self.http_port <= 65535:
+            raise ValueError("http_port must be between 1 and 65535")
         if self.queue_capacity < 1:
             raise ValueError("queue_capacity must be at least 1")
         if self.recent_sequence_history < 1:
@@ -66,4 +72,6 @@ class Settings:
             health_check_interval_seconds=_parse_int_env(
                 "HEALTH_CHECK_INTERVAL_SECONDS", _HEALTH_CHECK_INTERVAL_SECONDS
             ),
+            http_host=os.environ.get("HTTP_HOST", _HTTP_HOST),
+            http_port=_parse_int_env("HTTP_PORT", _HTTP_PORT),
         )
