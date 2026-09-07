@@ -28,6 +28,25 @@ def _valid_packet(**overrides: object) -> TelemetryPacket:
     return TelemetryPacket(**_valid_packet_kwargs(**overrides))
 
 
+def _valid_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "asset_id": "sat-001",
+        "sequence_number": 1,
+        "sent_at": "2026-09-06T12:00:00",
+        "temperature_c": 1.0,
+        "battery_pct": 50.0,
+        "signal_dbm": -70.0,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _payload_missing(field: str) -> dict[str, object]:
+    payload = _valid_payload()
+    del payload[field]
+    return payload
+
+
 def test_encode_decode_roundtrip() -> None:
     packet = _valid_packet()
 
@@ -37,13 +56,19 @@ def test_encode_decode_roundtrip() -> None:
 
 
 def test_decode_rejects_invalid_utf8() -> None:
-    with pytest.raises(InvalidPacketError, match="packet is not valid utf-8"):
+    with pytest.raises(InvalidPacketError, match="packet is not valid utf-8") as exc_info:
         decode_packet(b"\xff\xfe\x00")
+
+    assert type(exc_info.value) is InvalidPacketError
+    assert exc_info.value.__cause__ is not None
 
 
 def test_decode_rejects_invalid_json() -> None:
-    with pytest.raises(InvalidPacketError, match="packet is not valid json"):
+    with pytest.raises(InvalidPacketError, match="packet is not valid json") as exc_info:
         decode_packet(b"{not json")
+
+    assert type(exc_info.value) is InvalidPacketError
+    assert exc_info.value.__cause__ is not None
 
 
 @pytest.mark.parametrize(
@@ -65,14 +90,19 @@ def test_decode_rejects_non_standard_json_constants(raw: bytes) -> None:
 @pytest.mark.parametrize(
     ("payload", "match"),
     [
-        ({"sequence_number": 1, "sent_at": "2026-09-06T12:00:00", "temperature_c": 1.0, "battery_pct": 50.0, "signal_dbm": -70.0}, "asset_id"),
-        ({"asset_id": "sat-001", "sent_at": "2026-09-06T12:00:00", "temperature_c": 1.0, "battery_pct": 50.0, "signal_dbm": -70.0}, "sequence_number"),
-        ({"asset_id": "sat-001", "sequence_number": "not-int", "sent_at": "2026-09-06T12:00:00", "temperature_c": 1.0, "battery_pct": 50.0, "signal_dbm": -70.0}, "sequence_number"),
-        ({"asset_id": "sat-001", "sequence_number": 1, "sent_at": "2026-09-06T12:00:00", "temperature_c": 1.0, "battery_pct": 50.0, "signal_dbm": -70.0, "extra_field": "bad"}, "extra"),
-        ({"asset_id": "sat-001", "sequence_number": -1, "sent_at": "2026-09-06T12:00:00", "temperature_c": 1.0, "battery_pct": 50.0, "signal_dbm": -70.0}, "sequence_number"),
-        ({"asset_id": "sat-001", "sequence_number": 1, "sent_at": "2026-09-06T12:00:00", "temperature_c": 1.0, "battery_pct": -0.1, "signal_dbm": -70.0}, "battery_pct"),
-        ({"asset_id": "sat-001", "sequence_number": 1, "sent_at": "2026-09-06T12:00:00", "temperature_c": 1.0, "battery_pct": 100.1, "signal_dbm": -70.0}, "battery_pct"),
-        ({"asset_id": "", "sequence_number": 1, "sent_at": "2026-09-06T12:00:00", "temperature_c": 1.0, "battery_pct": 50.0, "signal_dbm": -70.0}, "asset_id"),
+        (_payload_missing("asset_id"), "asset_id"),
+        (_payload_missing("sequence_number"), "sequence_number"),
+        (_payload_missing("sent_at"), "sent_at"),
+        (_payload_missing("temperature_c"), "temperature_c"),
+        (_payload_missing("battery_pct"), "battery_pct"),
+        (_payload_missing("signal_dbm"), "signal_dbm"),
+        (_valid_payload(sequence_number="not-int"), "sequence_number"),
+        (_valid_payload(asset_id=123), "asset_id"),
+        (_valid_payload(extra_field="bad"), "extra"),
+        (_valid_payload(sequence_number=-1), "sequence_number"),
+        (_valid_payload(battery_pct=-0.1), "battery_pct"),
+        (_valid_payload(battery_pct=100.1), "battery_pct"),
+        (_valid_payload(asset_id=""), "asset_id"),
     ],
 )
 def test_decode_rejects_invalid_schema(payload: dict[str, object], match: str) -> None:
@@ -89,3 +119,4 @@ def test_decode_rejects_non_object_json() -> None:
         decode_packet(b"[1, 2, 3]")
 
     assert type(exc_info.value) is InvalidPacketError
+    assert exc_info.value.__cause__ is not None
