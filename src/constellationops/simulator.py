@@ -22,6 +22,10 @@ def _asset_id(index: int) -> str:
     return f"sat-{index:03d}"
 
 
+def _asset_rng(seed: int | None, index: int) -> random.Random:
+    return random.Random(seed + index) if seed is not None else random.Random()
+
+
 def _generate_telemetry_values(rng: random.Random) -> tuple[float, float, float]:
     temperature_c = rng.uniform(*_TEMPERATURE_C_RANGE)
     battery_pct = rng.uniform(*_BATTERY_PCT_RANGE)
@@ -34,7 +38,7 @@ async def _run_asset(
     transport: asyncio.DatagramTransport,
     rate_hz: float,
     deadline: float | None,
-    rng: random.Random,
+    rng: random.Random, 
 ) -> None:
     loop = asyncio.get_running_loop()
     sequence_number = 0
@@ -86,7 +90,7 @@ async def run_simulator(
                 transport,
                 rate,
                 deadline,
-                random.Random(seed + index) if seed is not None else random.Random(),
+                _asset_rng(seed, index),
             )
             for index in range(1, assets + 1)
         ]

@@ -11,6 +11,7 @@ from constellationops.simulator import (
     _DEFAULT_HOST,
     _DEFAULT_PORT,
     _DEFAULT_RATE,
+    _asset_rng,
     _build_parser,
     _generate_telemetry_values,
     _run_asset,
@@ -54,12 +55,32 @@ async def _collect_packets(
 
 
 def test_seeded_values_are_deterministic() -> None:
-    rng_a = random.Random(42 + 1)
-    rng_b = random.Random(42 + 1)
+    rng_a = _asset_rng(42, 1)
+    rng_b = _asset_rng(42, 1)
     assert _generate_telemetry_values(rng_a) == _generate_telemetry_values(rng_b)
 
-    rng_c = random.Random(99 + 1)
+    rng_c = _asset_rng(99, 1)
     assert _generate_telemetry_values(rng_a) != _generate_telemetry_values(rng_c)
+
+
+def test_asset_rng_is_independent_per_asset() -> None:
+    seed = 42
+    rng_first = _asset_rng(seed, 1)
+    rng_second = _asset_rng(seed, 2)
+
+    assert rng_first is not rng_second
+    assert _generate_telemetry_values(rng_first) != _generate_telemetry_values(rng_second)
+
+
+def test_asset_rngs_do_not_interfere() -> None:
+    expected_b = _generate_telemetry_values(_asset_rng(42, 2))
+
+    rng_a = _asset_rng(42, 1)
+    rng_b = _asset_rng(42, 2)
+    for _ in range(10):
+        _generate_telemetry_values(rng_a)
+
+    assert _generate_telemetry_values(rng_b) == expected_b
 
 
 def test_seeded_values_respect_bounds() -> None:
