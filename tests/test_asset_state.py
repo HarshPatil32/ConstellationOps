@@ -1,6 +1,7 @@
 from datetime import datetime
 
 import pytest
+from pydantic import ValidationError
 
 from constellationops.asset_state import AssetHealth, AssetState, SequenceClass
 from constellationops.telemetry import TelemetryPacket
@@ -55,7 +56,7 @@ def test_asset_state_defaults() -> None:
     assert len(state.recent_sequence_order) == 0
     assert len(state.recent_sequence_set) == 0
     assert state.accepted_count == 0
-    assert state.gap_count == 0
+    assert state.forward_gap_event_count == 0
     assert state.duplicate_count == 0
     assert state.out_of_order_count == 0
     assert state.latest_telemetry is None
@@ -70,69 +71,11 @@ def test_asset_state_rejects_invalid_capacity(recent_sequence_capacity: int) -> 
         _asset_state(recent_sequence_capacity=recent_sequence_capacity)
 
 
-def test_record_sequence_adds_to_deque_and_set() -> None:
-    state = _asset_state(recent_sequence_capacity=3)
-
-    state.record_sequence(1)
-
-    assert list(state.recent_sequence_order) == [1]
-    assert state.recent_sequence_set == {1}
-
-
-def test_record_sequence_evicts_on_every_insert_when_capacity_is_one() -> None:
-    state = _asset_state(recent_sequence_capacity=1)
-
-    state.record_sequence(1)
-    assert list(state.recent_sequence_order) == [1]
-    assert state.recent_sequence_set == {1}
-
-    state.record_sequence(2)
-    assert list(state.recent_sequence_order) == [2]
-    assert state.recent_sequence_set == {2}
-    assert 1 not in state.recent_sequence_set
-
-
-def test_record_sequence_evicts_oldest_when_over_capacity() -> None:
-    state = _asset_state(recent_sequence_capacity=3)
-
-    for sequence_number in range(1, 11):
-        state.record_sequence(sequence_number)
-
-    assert list(state.recent_sequence_order) == [8, 9, 10]
-    assert state.recent_sequence_set == {8, 9, 10}
-    assert len(state.recent_sequence_order) == len(state.recent_sequence_set)
-
-
-def test_record_sequence_membership_reflects_current_window() -> None:
-    state = _asset_state(recent_sequence_capacity=3)
-
-    for sequence_number in range(1, 11):
-        state.record_sequence(sequence_number)
-
-    for sequence_number in range(1, 8):
-        assert sequence_number not in state.recent_sequence_set
-
-    for sequence_number in range(8, 11):
-        assert sequence_number in state.recent_sequence_set
-
-
-def test_record_sequence_reinsert_is_no_op() -> None:
-    state = _asset_state(recent_sequence_capacity=3)
-
-    state.record_sequence(1)
-    state.record_sequence(2)
-    state.record_sequence(3)
-    state.record_sequence(2)
-
-    assert list(state.recent_sequence_order) == [1, 2, 3]
-    assert state.recent_sequence_set == {1, 2, 3}
-
-
 def test_asset_states_do_not_share_mutable_defaults() -> None:
     first = _asset_state(asset_id="sat-001")
     second = _asset_state(asset_id="sat-002")
 
-    first.record_sequence(1)
+    first.observe(_packet(sequence_number=1), 100.0)
 
     assert list(first.recent_sequence_order) == [1]
     assert first.recent_sequence_set == {1}
@@ -154,7 +97,7 @@ def test_observe_first_packet_is_classified_first_and_sets_state() -> None:
     assert state.last_seen_monotonic == now
     assert state.last_progress_monotonic == now
     assert state.accepted_count == 1
-    assert state.gap_count == 0
+    assert state.forward_gap_event_count == 0
     assert state.duplicate_count == 0
     assert state.out_of_order_count == 0
     assert 10 in state.recent_sequence_set
@@ -173,7 +116,7 @@ def test_observe_normal_packet_advances_state() -> None:
     assert state.latest_telemetry is packet
     assert state.last_progress_monotonic == 101.0
     assert state.accepted_count == 2
-    assert state.gap_count == 0
+    assert state.forward_gap_event_count == 0
 
 
 @pytest.mark.parametrize(
@@ -198,7 +141,7 @@ def test_observe_forward_gap_returns_correct_gap_size_and_advances_state(
     assert state.latest_telemetry is packet
     assert state.last_progress_monotonic == 102.0
     assert state.accepted_count == 2
-    assert state.gap_count == 1
+    assert state.forward_gap_event_count == 1
     assert second_sequence in state.recent_sequence_set
 
 
@@ -336,7 +279,7 @@ def test_observe_counters_are_consistent_across_classes() -> None:
     state.observe(_packet(sequence_number=12), 104.0)
 
     assert state.accepted_count == 3
-    assert state.gap_count == 1
+    assert state.forward_gap_event_count == 1
     assert state.out_of_order_count == 1
     assert state.duplicate_count == 1
 
@@ -375,7 +318,7 @@ def test_observe_out_of_order_then_forward_gap() -> None:
     assert gap_size == 4
     assert state.highest_sequence == 20
     assert state.out_of_order_count == 1
-    assert state.gap_count == 2
+    assert state.forward_gap_event_count == 2
 
 
 def test_observe_eviction_removes_from_both_deque_and_set() -> None:
@@ -409,3 +352,40 @@ def test_observe_highest_sequence_evicted_from_history_is_duplicate() -> None:
     assert state.highest_sequence == 15
     assert state.duplicate_count == 1
     assert state.out_of_order_count == 1
+
+
+def test_forward_gap_event_count_is_events_not_estimated_missing_sum() -> None:
+    state = _asset_state()
+    state.observe(_packet(sequence_number=1), 100.0)
+
+    seq_class, gap_size = state.observe(_packet(sequence_number=1001), 101.0)
+
+    assert seq_class is SequenceClass.FORWARD_GAP
+    assert gap_size == 999
+    assert state.forward_gap_event_count == 1
+
+
+def test_filling_gaps_later_does_not_change_forward_gap_event_count() -> None:
+    state = _asset_state()
+    state.observe(_packet(sequence_number=10), 100.0)
+    state.observe(_packet(sequence_number=15), 101.0)
+
+    assert state.forward_gap_event_count == 1
+
+    for sequence_number in range(11, 15):
+        state.observe(_packet(sequence_number=sequence_number), 102.0)
+
+    assert state.forward_gap_event_count == 1
+    assert state.out_of_order_count == 4
+
+
+def test_latest_telemetry_is_not_mutable_after_observe() -> None:
+    state = _asset_state()
+    packet = _packet(sequence_number=10, temperature_c=22.5)
+    state.observe(packet, 100.0)
+
+    with pytest.raises(ValidationError):
+        packet.temperature_c = 999.0
+
+    assert state.latest_telemetry is not None
+    assert state.latest_telemetry.temperature_c == 22.5

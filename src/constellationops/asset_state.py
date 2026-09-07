@@ -27,7 +27,7 @@ class AssetState:
     recent_sequence_order: deque[int] = field(default_factory=deque) # Used for O(1) oldest value lookup and eviction
     recent_sequence_set: set[int] = field(default_factory=set) # Used for O(1) lookups
     accepted_count: int = 0
-    gap_count: int = 0
+    forward_gap_event_count: int = 0
     duplicate_count: int = 0
     out_of_order_count: int = 0
     latest_telemetry: TelemetryPacket | None = None
@@ -39,7 +39,7 @@ class AssetState:
         if self.recent_sequence_capacity < 1:
             raise ValueError("recent_sequence_capacity must be at least 1")
 
-    def record_sequence(self, sequence_number: int) -> None:
+    def _record_sequence(self, sequence_number: int) -> None:
         if sequence_number in self.recent_sequence_set:
             return
         self.recent_sequence_order.append(sequence_number)
@@ -80,13 +80,13 @@ class AssetState:
             self.latest_telemetry = packet
             self.last_progress_monotonic = now
             self.accepted_count += 1
-            self.record_sequence(seq)
+            self._record_sequence(seq)
             if seq_class is SequenceClass.FORWARD_GAP:
-                self.gap_count += 1
+                self.forward_gap_event_count += 1
         elif seq_class is SequenceClass.DUPLICATE:
             self.duplicate_count += 1
         else:
             self.out_of_order_count += 1
-            self.record_sequence(seq)
+            self._record_sequence(seq)
 
         return seq_class, gap_size
