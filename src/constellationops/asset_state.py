@@ -32,6 +32,7 @@ class AssetState:
     out_of_order_count: int = 0
     latest_telemetry: TelemetryPacket | None = None
     last_seen_monotonic: float | None = None
+    last_progress_monotonic: float | None = None
     health: AssetHealth = AssetHealth.ONLINE
 
     def __post_init__(self) -> None:
@@ -46,3 +47,46 @@ class AssetState:
         if len(self.recent_sequence_order) > self.recent_sequence_capacity:
             oldest = self.recent_sequence_order.popleft()
             self.recent_sequence_set.discard(oldest)
+
+    def observe(self, packet: TelemetryPacket, now: float) -> tuple[SequenceClass, int]:
+        seq = packet.sequence_number
+        self.last_seen_monotonic = now
+
+        if self.highest_sequence is None:
+            seq_class = SequenceClass.FIRST
+            gap_size = 0
+        elif seq in self.recent_sequence_set:
+            seq_class = SequenceClass.DUPLICATE
+            gap_size = 0
+        elif seq == self.highest_sequence:
+            seq_class = SequenceClass.DUPLICATE
+            gap_size = 0
+        elif seq == self.highest_sequence + 1:
+            seq_class = SequenceClass.NORMAL
+            gap_size = 0
+        elif seq > self.highest_sequence + 1:
+            seq_class = SequenceClass.FORWARD_GAP
+            gap_size = seq - self.highest_sequence - 1
+        else:
+            seq_class = SequenceClass.OUT_OF_ORDER
+            gap_size = 0
+
+        if seq_class in (
+            SequenceClass.FIRST,
+            SequenceClass.NORMAL,
+            SequenceClass.FORWARD_GAP,
+        ):
+            self.highest_sequence = seq
+            self.latest_telemetry = packet
+            self.last_progress_monotonic = now
+            self.accepted_count += 1
+            self.record_sequence(seq)
+            if seq_class is SequenceClass.FORWARD_GAP:
+                self.gap_count += 1
+        elif seq_class is SequenceClass.DUPLICATE:
+            self.duplicate_count += 1
+        else:
+            self.out_of_order_count += 1
+            self.record_sequence(seq)
+
+        return seq_class, gap_size
