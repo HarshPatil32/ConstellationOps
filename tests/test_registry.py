@@ -92,6 +92,18 @@ def test_all_returns_all_created_assets() -> None:
         assert any(state is expected for state in all_states)
 
 
+def test_assets_returns_live_internal_dict() -> None:
+    registry = _registry()
+
+    assert registry.assets is registry._assets
+    assert registry.assets == {}
+
+    state = registry.get_or_create("sat-001")
+
+    assert registry.assets["sat-001"] is state
+    assert len(registry.assets) == 1
+
+
 def test_known_assets_reflects_count() -> None:
     registry = _registry()
 

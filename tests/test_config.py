@@ -10,6 +10,8 @@ _ENV_VARS = (
     "STALE_AFTER_SECONDS",
     "OFFLINE_AFTER_SECONDS",
     "HEALTH_CHECK_INTERVAL_SECONDS",
+    "HTTP_HOST",
+    "HTTP_PORT",
 )
 
 _DEFAULT_SETTINGS = Settings(
@@ -20,6 +22,8 @@ _DEFAULT_SETTINGS = Settings(
     stale_after_seconds=5,
     offline_after_seconds=15,
     health_check_interval_seconds=5,
+    http_host="0.0.0.0",
+    http_port=8000,
 )
 
 
@@ -32,6 +36,8 @@ def _valid_settings_kwargs(**overrides: object) -> dict[str, object]:
         "stale_after_seconds": _DEFAULT_SETTINGS.stale_after_seconds,
         "offline_after_seconds": _DEFAULT_SETTINGS.offline_after_seconds,
         "health_check_interval_seconds": _DEFAULT_SETTINGS.health_check_interval_seconds,
+        "http_host": _DEFAULT_SETTINGS.http_host,
+        "http_port": _DEFAULT_SETTINGS.http_port,
     }
     kwargs.update(overrides)
     return kwargs
@@ -57,6 +63,8 @@ def test_from_env_applies_overrides(clear_config_env: None, monkeypatch: pytest.
     monkeypatch.setenv("STALE_AFTER_SECONDS", "3")
     monkeypatch.setenv("OFFLINE_AFTER_SECONDS", "10")
     monkeypatch.setenv("HEALTH_CHECK_INTERVAL_SECONDS", "2")
+    monkeypatch.setenv("HTTP_HOST", "127.0.0.1")
+    monkeypatch.setenv("HTTP_PORT", "9000")
 
     settings = Settings.from_env()
 
@@ -67,6 +75,8 @@ def test_from_env_applies_overrides(clear_config_env: None, monkeypatch: pytest.
     assert settings.stale_after_seconds == 3
     assert settings.offline_after_seconds == 10
     assert settings.health_check_interval_seconds == 2
+    assert settings.http_host == "127.0.0.1"
+    assert settings.http_port == 9000
 
 
 @pytest.mark.parametrize(
@@ -89,8 +99,9 @@ def test_settings_rejects_invalid_thresholds_direct(
 @pytest.mark.parametrize(
     ("field", "value", "match"),
     [
-        ("udp_port", 0, "udp_port must be between 1 and 65535"),
-        ("udp_port", 65536, "udp_port must be between 1 and 65535"),
+        ("udp_port", 65536, "udp_port must be between 0 and 65535"),
+        ("http_port", 0, "http_port must be between 1 and 65535"),
+        ("http_port", 65536, "http_port must be between 1 and 65535"),
         ("queue_capacity", 0, "queue_capacity must be at least 1"),
         ("recent_sequence_history", 0, "recent_sequence_history must be at least 1"),
         ("stale_after_seconds", 0, "stale_after_seconds must be at least 1"),
