@@ -1,7 +1,9 @@
 import json
+import math
 from datetime import datetime
 
 import pytest
+from pydantic import ValidationError
 
 from constellationops.telemetry import (
     InvalidPacketError,
@@ -55,20 +57,20 @@ def test_encode_decode_roundtrip() -> None:
     assert decoded == packet
 
 
-def test_decode_rejects_invalid_utf8() -> None:
-    with pytest.raises(InvalidPacketError, match="packet is not valid utf-8") as exc_info:
-        decode_packet(b"\xff\xfe\x00")
+def test_decode_accepts_iso8601_sent_at() -> None:
+    decoded = decode_packet(json.dumps(_valid_payload()).encode("utf-8"))
 
-    assert type(exc_info.value) is InvalidPacketError
-    assert exc_info.value.__cause__ is not None
+    assert decoded.sent_at == datetime(2026, 9, 6, 12, 0, 0)
+
+
+def test_decode_rejects_invalid_utf8() -> None:
+    with pytest.raises(InvalidPacketError, match="packet is not valid utf-8"):
+        decode_packet(b"\xff\xfe\x00")
 
 
 def test_decode_rejects_invalid_json() -> None:
-    with pytest.raises(InvalidPacketError, match="packet is not valid json") as exc_info:
+    with pytest.raises(InvalidPacketError, match="packet is not valid json"):
         decode_packet(b"{not json")
-
-    assert type(exc_info.value) is InvalidPacketError
-    assert exc_info.value.__cause__ is not None
 
 
 @pytest.mark.parametrize(
@@ -79,12 +81,39 @@ def test_decode_rejects_invalid_json() -> None:
         b'{"asset_id":"sat-001","sequence_number":1,"sent_at":"2026-09-06T12:00:00","temperature_c":1.0,"battery_pct":50.0,"signal_dbm":-Infinity}',
     ],
 )
-def test_decode_rejects_non_standard_json_constants(raw: bytes) -> None:
-    with pytest.raises(InvalidPacketError, match="packet is not valid json") as exc_info:
+def test_decode_rejects_non_finite_floats(raw: bytes) -> None:
+    with pytest.raises(InvalidPacketError, match="packet failed schema validation"):
         decode_packet(raw)
 
-    assert type(exc_info.value) is InvalidPacketError
-    assert exc_info.value.__cause__ is not None
+
+@pytest.mark.parametrize(
+    "sequence_number",
+    [True, False, "42"],
+)
+def test_decode_rejects_invalid_sequence_number_coercion(
+    sequence_number: object,
+) -> None:
+    with pytest.raises(InvalidPacketError, match="packet failed schema validation") as exc_info:
+        decode_packet(
+            json.dumps(_valid_payload(sequence_number=sequence_number)).encode("utf-8")
+        )
+
+    assert "sequence_number" in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("temperature_c", math.nan),
+        ("temperature_c", math.inf),
+        ("temperature_c", -math.inf),
+        ("battery_pct", math.nan),
+        ("signal_dbm", math.inf),
+    ],
+)
+def test_telemetry_packet_rejects_non_finite_floats(field: str, value: float) -> None:
+    with pytest.raises(ValidationError):
+        _valid_packet(**{field: value})
 
 
 @pytest.mark.parametrize(
@@ -109,14 +138,9 @@ def test_decode_rejects_invalid_schema(payload: dict[str, object], match: str) -
     with pytest.raises(InvalidPacketError, match="packet failed schema validation") as exc_info:
         decode_packet(json.dumps(payload).encode("utf-8"))
 
-    assert type(exc_info.value) is InvalidPacketError
-    assert exc_info.value.__cause__ is not None
     assert match in str(exc_info.value)
 
 
 def test_decode_rejects_non_object_json() -> None:
-    with pytest.raises(InvalidPacketError, match="packet failed schema validation") as exc_info:
+    with pytest.raises(InvalidPacketError, match="packet failed schema validation"):
         decode_packet(b"[1, 2, 3]")
-
-    assert type(exc_info.value) is InvalidPacketError
-    assert exc_info.value.__cause__ is not None

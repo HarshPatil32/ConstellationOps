@@ -5,18 +5,14 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 
 class InvalidPacketError(Exception):
-    """Raised when any of the three tests in decode_packet fail."""
-
-
-def _reject_json_constant(value: str) -> None:
-    raise json.JSONDecodeError(f"unsupported json constant: {value!r}", value, 0)
+    """Raised when any of the three stages in decode_packet fail."""
 
 
 class TelemetryPacket(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     asset_id: str = Field(min_length=1)
-    sequence_number: int = Field(ge=0)
+    sequence_number: int = Field(ge=0, strict=True)
     sent_at: datetime
     temperature_c: float
     battery_pct: float = Field(ge=0, le=100)
@@ -30,7 +26,7 @@ def decode_packet(raw: bytes) -> TelemetryPacket:
         raise InvalidPacketError(f"packet is not valid utf-8: {exc}") from exc
 
     try:
-        data = json.loads(text, parse_constant=_reject_json_constant)
+        data = json.loads(text)
     except json.JSONDecodeError as exc:
         raise InvalidPacketError(f"packet is not valid json: {exc}") from exc
 
