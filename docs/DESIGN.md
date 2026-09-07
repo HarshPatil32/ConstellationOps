@@ -41,11 +41,13 @@ Telemetry uses this shape:
 
 ### 2. UDP Telemetry Receiver
 
-The receiver owns the network boundary. It accepts UDP datagrams, decodes/parses them, validates them against the telemetry schema, rejects malformed input, records the appropriate receive/rejection metrics, and attempts to enqueue valid telemetry without blocking indefinitely. UDP is intentional because the project needs to confront loss, duplication, and reordering at the application layer rather than having the transport hide those behaviors. This component is forced by Invariant 1 and participates directly in Invariants 2, 3, and 8.
+The receiver owns the network boundary. It accepts UDP datagrams, decodes/parses them, validates them against the telemetry schema, rejects malformed input, records the appropriate receive/rejection metrics, and enqueues valid telemetry non-blockingly, dropping on overflow rather than blocking (see Bounded Ingestion Queue below for why). UDP is intentional because the project needs to confront loss, duplication, and reordering at the application layer rather than having the transport hide those behaviors. This component is forced by Invariant 1 and participates directly in Invariants 2, 3, and 8.
 
 ### 3. Bounded Ingestion Queue
 
 A fixed-capacity in-process queue separates network receipt from telemetry processing. It absorbs short bursts while imposing a hard upper bound on queued telemetry. When capacity is exhausted, the receiver performs an explicit load-shedding action and records the drop rather than allowing backlog growth to consume arbitrary memory. This component exists directly because of Invariants 2 and 3 and provides observable overload behavior required by Invariant 8.
+
+On overflow, the receiver drops the incoming packet rather than evicting an already-queued one (drop-newest, not drop-oldest). Evicting a queued packet would require the receiver to reach into the queue's internals to remove an arbitrary item, adding complexity for no benefit under P0's uniform, undifferentiated telemetry—there is no priority signal that makes an already-queued packet less valuable than the one just arrived. Drop-newest is also the natural behavior of `asyncio.Queue.put_nowait`, which is the primitive that keeps the receiver non-blocking (see the UDP Telemetry Receiver section above). The receiver never blocks on a full queue: `datagram_received` is a synchronous callback on `asyncio.DatagramProtocol`, not a coroutine, so it cannot `await queue.put()` at all. Even if it could, blocking would stall further datagram handling on this receiver, turning one overloaded moment into delayed processing for every asset and violating both the bounded-buffering guarantee (Invariant 2) and the requirement that overload be explicit and immediate rather than a hidden backlog (Invariant 3).
 
 ### 4. Telemetry Processor / Sequence Classifier
 
