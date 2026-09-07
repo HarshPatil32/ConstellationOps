@@ -36,12 +36,6 @@ def _wait_until(condition, timeout: float = 1.0) -> None:
         time.sleep(0.01)
 
 
-@pytest.fixture
-def app_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("UDP_HOST", "127.0.0.1")
-    monkeypatch.setenv("UDP_PORT", "0")
-
-
 def test_lifespan_populates_app_state(app_env: None) -> None:
     with TestClient(app) as client:
         assert client.app.state.settings is not None

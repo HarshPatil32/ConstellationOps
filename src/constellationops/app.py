@@ -1,9 +1,11 @@
 import asyncio
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from constellationops.api import router
 from constellationops.config import Settings
 from constellationops.health import run_health_monitor
 from constellationops.ingest import TelemetryProtocol
@@ -20,6 +22,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     health_task: asyncio.Task[None] | None = None
 
     try:
+        app.state.started_monotonic = time.monotonic()
         settings = Settings.from_env()
         metrics = Metrics()
         registry = AssetRegistry(recent_sequence_capacity=settings.recent_sequence_history)
@@ -64,7 +67,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
-    return FastAPI(lifespan=lifespan)
+    app = FastAPI(lifespan=lifespan)
+    app.include_router(router)
+    return app
 
 
 app = create_app()
