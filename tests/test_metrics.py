@@ -13,7 +13,7 @@ _COUNTER_FIELDS = (
     "out_of_order_packets_total",
 )
 
-_SNAPSHOT_KEYS = frozenset({*_COUNTER_FIELDS, "known_assets"})
+_SNAPSHOT_KEYS = frozenset({*_COUNTER_FIELDS, "known_assets", "packets_per_second"})
 
 
 def test_new_metrics_all_zero() -> None:
@@ -56,6 +56,7 @@ def test_increment_accumulates() -> None:
         "",
         "packets_processed_total ",
         "known_assets",
+        "clock",
     ],
 )
 def test_increment_rejects_unknown_name(name: str) -> None:
@@ -107,3 +108,44 @@ def test_snapshot_reflects_known_assets(known_assets: int) -> None:
     result = metrics.snapshot(known_assets=known_assets)
 
     assert result["known_assets"] == known_assets
+
+
+def test_packets_per_second_zero_on_first_snapshot() -> None:
+    metrics = Metrics()
+
+    result = metrics.snapshot(known_assets=0)
+
+    assert result["packets_per_second"] == 0.0
+
+
+def test_packets_per_second_computed_from_delta_over_injected_clock() -> None:
+    now = [0.0]
+
+    def clock() -> float:
+        return now[0]
+
+    metrics = Metrics(clock=clock)
+    metrics.snapshot(known_assets=0)
+
+    metrics.increment("packets_processed_total", n=10)
+    now[0] = 2.0
+
+    result = metrics.snapshot(known_assets=0)
+
+    assert result["packets_per_second"] == 5.0
+
+
+def test_packets_per_second_zero_when_elapsed_time_not_positive() -> None:
+    now = [1.0]
+
+    def clock() -> float:
+        return now[0]
+
+    metrics = Metrics(clock=clock)
+    metrics.snapshot(known_assets=0)
+
+    metrics.increment("packets_processed_total", n=5)
+
+    result = metrics.snapshot(known_assets=0)
+
+    assert result["packets_per_second"] == 0.0
