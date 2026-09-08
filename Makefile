@@ -1,12 +1,19 @@
 VENV := .venv
 PYTHON := $(VENV)/bin/python
+PIP_COMPILE := $(VENV)/bin/pip-compile
 
-.PHONY: run simulate simulate-faulty test
+.PHONY: run simulate simulate-faulty test lock
 
-$(VENV)/.installed: pyproject.toml
+$(VENV)/.installed: pyproject.toml requirements.lock
 	python3 -m venv --clear $(VENV)
-	$(PYTHON) -m pip install -e ".[test]"
+	$(PYTHON) -m pip install --upgrade pip
+	$(PYTHON) -m pip install -r requirements.lock
+	$(PYTHON) -m pip install -e . --no-deps
 	touch $(VENV)/.installed
+
+lock: pyproject.toml
+	python3 -m pip install pip-tools
+	pip-compile pyproject.toml --extra test -o requirements.lock
 
 run: $(VENV)/.installed
 	$(PYTHON) -m constellationops
