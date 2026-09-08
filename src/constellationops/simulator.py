@@ -89,6 +89,7 @@ async def _run_asset(
 
     try:
         while deadline is None or loop.time() < deadline:
+            _prune_pending(pending)
             try:
                 temperature_c, battery_pct, signal_dbm = _generate_telemetry_values(rng)
                 packet = TelemetryPacket(
@@ -116,7 +117,6 @@ async def _run_asset(
                         stats.duplicated += 1
                     if reorder:
                         stats.delayed += 1
-                        _prune_pending(pending)
                         pending.append(
                             asyncio.create_task(
                                 _delayed_send(transport, encoded, reorder_delay_s, duplicate)
