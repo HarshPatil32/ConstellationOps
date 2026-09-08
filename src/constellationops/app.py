@@ -9,7 +9,7 @@ from constellationops.api import router
 from constellationops.config import Settings
 from constellationops.health import run_health_monitor
 from constellationops.ingest import TelemetryProtocol
-from constellationops.metrics import Metrics
+from constellationops.metrics import Metrics, run_metrics_sampler
 from constellationops.processor import run_telemetry_processor
 from constellationops.registry import AssetRegistry
 from constellationops.telemetry import TelemetryPacket
@@ -20,6 +20,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     transport: asyncio.DatagramTransport | None = None
     processor_task: asyncio.Task[None] | None = None
     health_task: asyncio.Task[None] | None = None
+    metrics_task: asyncio.Task[None] | None = None
 
     try:
         app.state.started_monotonic = time.monotonic()
@@ -50,12 +51,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 settings.health_check_interval_seconds,
             )
         )
+        metrics_task = asyncio.create_task(
+            run_metrics_sampler(metrics, settings.health_check_interval_seconds)
+        )
         app.state.processor_task = processor_task
         app.state.health_task = health_task
+        app.state.metrics_task = metrics_task
 
         yield
     finally:
-        for task in (health_task, processor_task):
+        for task in (metrics_task, health_task, processor_task):
             if task is not None:
                 task.cancel()
                 try:

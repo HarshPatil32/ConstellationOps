@@ -1,6 +1,8 @@
+import asyncio
+
 import pytest
 
-from constellationops.metrics import Metrics
+from constellationops.metrics import Metrics, run_metrics_sampler
 
 _COUNTER_FIELDS = (
     "datagrams_received_total",
@@ -125,14 +127,13 @@ def test_packets_per_second_computed_from_delta_over_injected_clock() -> None:
         return now[0]
 
     metrics = Metrics(clock=clock)
-    metrics.snapshot(known_assets=0)
+    metrics.sample_rate()
 
     metrics.increment("packets_processed_total", n=10)
     now[0] = 2.0
 
-    result = metrics.snapshot(known_assets=0)
-
-    assert result["packets_per_second"] == 5.0
+    assert metrics.sample_rate() == 5.0
+    assert metrics.snapshot(known_assets=0)["packets_per_second"] == 5.0
 
 
 def test_packets_per_second_zero_when_elapsed_time_not_positive() -> None:
@@ -142,10 +143,55 @@ def test_packets_per_second_zero_when_elapsed_time_not_positive() -> None:
         return now[0]
 
     metrics = Metrics(clock=clock)
-    metrics.snapshot(known_assets=0)
+    metrics.sample_rate()
 
     metrics.increment("packets_processed_total", n=5)
 
-    result = metrics.snapshot(known_assets=0)
+    assert metrics.sample_rate() == 0.0
 
-    assert result["packets_per_second"] == 0.0
+
+def test_snapshot_does_not_resample_packets_per_second() -> None:
+    now = [0.0]
+
+    def clock() -> float:
+        return now[0]
+
+    metrics = Metrics(clock=clock)
+    metrics.sample_rate()
+    metrics.increment("packets_processed_total", n=10)
+    now[0] = 2.0
+    metrics.sample_rate()
+
+    first = metrics.snapshot(known_assets=0)
+    metrics.increment("packets_processed_total", n=100)
+    second = metrics.snapshot(known_assets=0)
+
+    assert first["packets_per_second"] == 5.0
+    assert second["packets_per_second"] == 5.0
+
+
+async def test_metrics_sampler_updates_rate_periodically() -> None:
+    metrics = Metrics()
+    task = asyncio.create_task(run_metrics_sampler(metrics, interval_seconds=0.02))
+
+    try:
+        await asyncio.sleep(0.03)
+        assert metrics.packets_per_second == 0.0
+
+        metrics.increment("packets_processed_total", n=10)
+        await asyncio.sleep(0.03)
+
+        assert metrics.packets_per_second > 0.0
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+
+async def test_metrics_sampler_cancels_cleanly() -> None:
+    metrics = Metrics()
+    task = asyncio.create_task(run_metrics_sampler(metrics, interval_seconds=0.01))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task

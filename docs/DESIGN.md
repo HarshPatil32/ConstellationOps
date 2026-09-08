@@ -66,11 +66,11 @@ The in-memory asset state model holds independent state for each simulated asset
 
 ### 6. Health Monitor
 
-The health monitor periodically evaluates each known asset using monotonic elapsed time since `last_seen` and explicit thresholds to derive `ONLINE`, `STALE`, or `OFFLINE`. Because UDP provides no connection lifecycle, inactivity must be inferred from time rather than from a disconnect event. Health uses valid communication rather than sequence advancement, so valid duplicate/late packets still refresh `last_seen`. This component is directly required by Invariant 7 and makes asset disappearance observable under Invariant 8.
+The health monitor periodically evaluates each known asset using monotonic elapsed time since `last_seen` and explicit thresholds to derive `ONLINE`, `STALE`, or `OFFLINE`. Because UDP provides no connection lifecycle, inactivity must be inferred from time rather than from a disconnect event. Health uses valid communication rather than sequence advancement, so valid duplicate/late packets still refresh `last_seen`. Health transitions are only recomputed on each monitor tick, so observed `STALE`/`OFFLINE` state may lag real silence by up to `health_check_interval_seconds`. This component is directly required by Invariant 7 and makes asset disappearance observable under Invariant 8.
 
 ### 7. Metrics / Read-Only FastAPI Surface
 
-The API provides a read-only inspection surface over current system and per-asset state so that the behavior of the ingestion pipeline can be verified externally. It exposes health/state and reliability counters such as malformed packets, duplicates, late/out-of-order packets, sequence gaps/estimated missing telemetry, and load-shedding drops. The ingestion pipeline owns the behavior and FastAPI only exposes it. This component exists primarily because of Invariant 8 and provides visibility into the enforcement of the other invariants.
+The API provides a read-only inspection surface over current system and per-asset state so that the behavior of the ingestion pipeline can be verified externally. It exposes health/state and reliability counters such as malformed packets, duplicates, late/out-of-order packets, sequence gaps/estimated missing telemetry, and load-shedding drops. `packets_per_second` is sampled on a fixed background interval rather than recomputed on every `/metrics` request, so rapid polling does not distort the rate. The ingestion pipeline owns the behavior and FastAPI only exposes it. This component exists primarily because of Invariant 8 and provides visibility into the enforcement of the other invariants.
 
 ### Invariant → Component Coverage
 

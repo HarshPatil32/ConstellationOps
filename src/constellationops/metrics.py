@@ -1,3 +1,4 @@
+import asyncio
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, fields
@@ -17,6 +18,7 @@ class Metrics:
 
     _last_processed: int | None = field(default=None, init=False, repr=False, compare=False)
     _last_time: float | None = field(default=None, init=False, repr=False, compare=False)
+    packets_per_second: float = field(default=0.0, init=False, repr=False, compare=False)
 
     def increment(self, name: str, n: int = 1) -> None:
         counter_names = {field.name for field in fields(self) if field.name.endswith("_total")}
@@ -26,7 +28,7 @@ class Metrics:
             raise ValueError("n must be at least 1")
         setattr(self, name, getattr(self, name) + n)
 
-    def _packets_per_second(self) -> float:
+    def sample_rate(self) -> float:
         now = self.clock()
         current = self.packets_processed_total
 
@@ -43,7 +45,8 @@ class Metrics:
 
         self._last_processed = current
         self._last_time = now
-        return round(rate, 2)
+        self.packets_per_second = round(rate, 2)
+        return self.packets_per_second
 
     def snapshot(self, known_assets: int) -> dict[str, int | float]:
         return {
@@ -56,5 +59,14 @@ class Metrics:
             "duplicate_packets_total": self.duplicate_packets_total,
             "out_of_order_packets_total": self.out_of_order_packets_total,
             "known_assets": known_assets,
-            "packets_per_second": self._packets_per_second(),
+            "packets_per_second": self.packets_per_second,
         }
+
+
+async def run_metrics_sampler(
+    metrics: Metrics,
+    interval_seconds: float,
+) -> None:
+    while True:
+        metrics.sample_rate()
+        await asyncio.sleep(interval_seconds)

@@ -45,8 +45,10 @@ def test_lifespan_populates_app_state(app_env: None) -> None:
         assert client.app.state.transport is not None
         assert client.app.state.processor_task is not None
         assert client.app.state.health_task is not None
+        assert client.app.state.metrics_task is not None
         assert not client.app.state.processor_task.done()
         assert not client.app.state.health_task.done()
+        assert not client.app.state.metrics_task.done()
 
 
 def test_lifespan_processes_udp_packet_end_to_end(app_env: None) -> None:
@@ -63,18 +65,22 @@ def test_lifespan_processes_udp_packet_end_to_end(app_env: None) -> None:
 def test_lifespan_shuts_down_cleanly(app_env: None) -> None:
     processor_task = None
     health_task = None
+    metrics_task = None
     transport = None
 
     with TestClient(app) as client:
         processor_task = client.app.state.processor_task
         health_task = client.app.state.health_task
+        metrics_task = client.app.state.metrics_task
         transport = client.app.state.transport
 
     assert processor_task is not None
     assert health_task is not None
+    assert metrics_task is not None
     assert transport is not None
     assert processor_task.cancelled() or processor_task.done()
     assert health_task.cancelled() or health_task.done()
+    assert metrics_task.cancelled() or metrics_task.done()
     assert transport.is_closing()
 
 
