@@ -1,7 +1,9 @@
+import asyncio
 import socket
 import time
 from datetime import datetime
 
+import pytest
 from fastapi.testclient import TestClient
 
 from constellationops.app import app
@@ -130,3 +132,52 @@ def test_full_lifecycle_two_assets_over_udp_reports_state_and_metrics(
     assert metrics_body["known_assets"] == 2
     assert isinstance(metrics_body["packets_per_second"], float)
     assert metrics_body["packets_per_second"] >= 0
+
+
+def test_overloaded_queue_drops_packets_then_recovers_after_slowdown_removed(
+    app_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("QUEUE_CAPACITY", "4")
+
+    with TestClient(app) as client:
+        sockname = client.app.state.transport.get_extra_info("sockname")
+        assert sockname is not None
+        queue = client.app.state.queue
+        assert queue.maxsize == 4
+
+        original_get = queue.get
+
+        async def slow_get() -> TelemetryPacket:
+            packet = await original_get()
+            await asyncio.sleep(0.05)
+            return packet
+
+        monkeypatch.setattr(queue, "get", slow_get)
+
+        for seq in range(20):
+            packet = _packet(asset_id="sat-overload", sequence_number=seq)
+            _send_datagram(encode_packet(packet), sockname)
+            assert queue.qsize() <= queue.maxsize
+
+        _wait_until(
+            lambda: client.app.state.metrics.packets_queue_dropped_total >= 1,
+            timeout=2.0,
+        )
+
+        assert not client.app.state.processor_task.done()
+        assert not client.app.state.transport.is_closing()
+        assert client.get("/health").status_code == 200
+
+        monkeypatch.setattr(queue, "get", original_get)
+
+        _wait_until(lambda: queue.empty(), timeout=2.0)
+
+        processed_before_follow_up = client.app.state.metrics.packets_processed_total
+        follow_up = _packet(asset_id="sat-overload", sequence_number=100)
+        _send_datagram(encode_packet(follow_up), sockname)
+        _wait_until(
+            lambda: client.app.state.metrics.packets_processed_total
+            > processed_before_follow_up,
+            timeout=2.0,
+        )
